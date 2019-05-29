@@ -78,7 +78,7 @@ int main(void)
 完毕后，释放mutex. mutex的实现可以保证，任何线程试图锁定一个已经被其它线程锁定的mutex时，它会等待直到该mutex被释放。
 
 c++11在标准库添加了<mutex>头文件，其中定义了std::mutex类，只要创建该类的示例，我们就创建了一个互斥锁mutex，std::mutex同样具有lock()/unlock()成员函数。
-例如,下面add_data()函数访问全局数据列表nums前先锁定std::mutex类型变量data\_lock，访问完毕释放data_lock:
+例如,下面add_data()函数访问全局数据列表nums前先锁定std::mutex类型变量`data_lock`，访问完毕释放`data_lock`:
 
 ```
 #include <list>
@@ -95,6 +95,8 @@ void add_data(int num)
 }
 ```
 ### 1.3) std::lock\_guard, std::unique\_guard, std::scoped\_guard
+- <strong>std::lock_guard</strong><br>
+
 上边add_data()代码的一个缺点是：如果`nums.push_back()`抛出异常，`add_data()`退出前将来不及释放`data_lock`。为此，<mutex>头文件定义了`lock_guard`模板类，以一种RAII(Resource 
 Acquisition Is Initialization) 的方式确保不管add_data()是正常退出还是异常退出，data_lock,都能被释放：
 
@@ -109,8 +111,64 @@ void add_data(int num)
 其实现原理：`std::lock_guard`类型变量guard初始化时以std::mutex作为参数，并寻求锁定该mutex (若它已被锁定，则`lock_guard`构造函数一直等待直到mutex被释放);
 `add_data()`（正常或异常）退出后，变量guard生命期结束，其析构函数被自动调用并释放了 `data_lock`.
 
-- <strong>std::unqiue_guard: xxx </strong><br>
-- <strong>std::scoped_guard: xxx</strong>><br>
+- <strong>std::unqiue_guard</strong><br>
+
+除了	`lock_guard`外，\<thread\>中还定义了`unique_guard`模板类。`unique_guard`不但有`lock_guard`的所有功能（在构造函数中锁定mutex,在析构函数中释放mutex），还提供了unlock()/try_lock()/lock()接口，使得调用者不必等待`lock_guard`对象生命期结束，可以提前释放mutex, 或者再次获取mutex锁，如下例所示：
+
+```
+std::mutex data_mutex;
+std::vector<int> nums;
+
+void get_and_process_data(int i)
+{ 
+    std::unique_lock<std::mutex> lock(data_mutex);
+    int data = nums[i];
+    my_lock.unlock();        
+    data = process(data);
+    my_lock.lock();
+    nums[i] = data;
+}
+```
+
+`unique_guard`另一个用途是与条件变量配合使用，因为`std::variable_condition::wait()`的第一个参数要求是`std::unique_lock`类型，其原因为：std::variable_condition::wait()在将调用它的线程放入等待队列并进入睡眠状态前，需要释放mutex， 在等待线程被`std::variable_condition::notify_one()`唤醒后，需要重新获取mutex锁，这种灵活性只有`uniue_lock`能提供。
+
+`unique_guard`还可以配合std::derfer_lock使用，其结果是在`unique_guard`对象被创建后，mutex并没有被锁定。利用这一特点，std::lock()可以同时锁定多个mutex，而不用担心死锁问题：
+
+```
+std::unique_lock<std::mutex> lk1(mutex1, std::defer_lock);
+std::unique_lock<std::mutex> lk2(mutex2, std::defer_lock);
+std::lock(lk1, lk2);
+```
+
+最后， `unique_guard`不能被copy，但可以被move, 这意味着被`unique_guard`锁定的mutex的所有权也会被转移， 例如, 下面示例中`get_lock()`获取了`some_mutex`锁，在其返回后，`some_mutex`锁所有权被转移给了`process_data()`。
+
+```
+std::unique_lock<std::mutex> get_lock()
+{
+    extern std::mutex some_mutex;
+    std::unique_lock<std::mutex> lk(some_mutex);
+    prepare_data();
+    return lk;
+}
+
+void process_data()
+{
+    std::unique_lock<std::mutex> lk(get_lock());
+    do_something();
+}
+```
+
+既然，`unique_guard`即拥有`lock_guard`的全部功能，又提供如此多的额外功能，为什么我们还要使用`lock_guard`呢？天下没有免费的午餐，`unique_guard`众多额外功能是以性能为代价的，其执行速度要比`lock_guard`慢，因此，只要在满足需求的前提下，应优先使用`lock_guard`。<br>
+
+- <strong>std::scoped_guard</strong>><br>
+
+`std::scoped_guard`是c++17引入的新类型，可以作为`std::lock_guard`的替代品，除具有`std::lock_guard`全部功能外，因为`std::scoped_guard`构造函数接收不定个数的参数，可以一次锁定多个mutex，而且这种锁定是deadlock-free的：
+
+```
+std::scoped_lock<std::mutex, std::mutex> lock(mutex1, mutex2);
+```
+<br>
+
 
 ### 1.4) std::variable\_condition, std::variable\_condition\_any
 std::mutex用于线程间保护共享数据，但有时多个线程间不仅需要互斥访问共享数据，还要同步协调其执行次序，例如著名的生产者-消费之问题：生产者生产产品放入公共队列，消费者从公共队列取走产品；公共队列作为共享资源，需要由mutex来保护；当队列已满，生产者不能继续放入产品，需要等待直到被告知队列有空余；当队列为空时，消费者不能从继续取走数据，需要等待直到被告知队列有产品。“等待直到某个事件发生或条件满足”正是同步原语条件变量（condition variable)要解决的问题。c++标准库提供了两种条件变量: ``std::condtion_variable` 和`std::condition_variable_any`，分别看一下：
