@@ -10,7 +10,7 @@
  每个编辑窗口可能运行于单独的线程，这些窗口会一直打开直到用户关闭），这时我们需要调用线程变量的detach()函数，该函数返回后，线程变量不再控制新线程，新
  线程会在它的线程函数执行完毕后有标准库负责销毁。 
 
- 例如，以下示例用无参函数say_hello()创建了线程t1，用接受一个vector\<int\>作为参数的函数sum_vector()创建了线程t2, 用Wrapper类的成员函数run()创建了线程t3, 用
+ 例如，以下示例用无参函数say_hello()创建了线程t1，用接收一个vector\<int\>作为参数的函数sum_vector()创建了线程t2, 用Wrapper类的成员函数run()创建了线程t3, 用
  bg_task对象创建了线程t4, 用lambda函数创建了线程t5,然后调用join(）函数等待这些线程结束：
 
 ```
@@ -158,7 +158,7 @@ void process_data()
 }
 ```
 
-既然，`unique_guard`即拥有`lock_guard`的全部功能，又提供如此多的额外功能，为什么我们还要使用`lock_guard`呢？天下没有免费的午餐，`unique_guard`众多额外功能是以性能为代价的，其执行速度要比`lock_guard`慢，因此，只要在满足需求的前提下，应优先使用`lock_guard`。<br>
+`unique_guard`既拥有`lock_guard`的全部功能，又提供如此多的额外功能，为什么我们还要使用`lock_guard`呢？天下没有免费的午餐，`unique_guard`众多额外功能是以性能为代价的，其执行速度要比`lock_guard`慢，因此，只要在满足需求的前提下，应优先使用`lock_guard`。<br>
 
 - <strong>std::scoped_guard</strong>><br>
 
@@ -168,6 +168,33 @@ void process_data()
 std::scoped_lock<std::mutex, std::mutex> lock(mutex1, mutex2);
 ```
 <br>
+1.3）std::once_flag和std::call_once()
+因为某些只执行一次性的操作太耗时，例如连接数据库，分配内存，创建singleton日志实例等，我们会借鉴lazy-initization的思想：不是在软件启动时创建他们，而是在第一次使用前创建，伪代码如下：
+
+```
+#1 DbConnection GetDbConnection()
+#2 {
+#3    if (g_dbconnection ==  NULL) {
+#4        g_dbconnection = ConnectDB(...);
+#5    }
+#6
+#7    return g_dbconnection;
+#8}
+```
+
+为避免多个线程多次运行#4, 一个直观的做法是在#3前获取某个mutex在#5后释放mutex。这样做的确能保证#4只会被运行一次，但是其副作用也很大：每个线程在运行GetDbConnection()时都要获取释放mutex，这实际上是不必要的串行化，极大降低了性能。其实，我们可以使用c++标准库提供的std::once_flag和std::call_once()来实现类似“只运行一次”的需求：
+
+```
+#1 std::once_flag dbconn_flag;
+#2
+#3 DbConnection GetDbConnection()
+#4 {
+#5    std::call_once(resource_flag, [&]() { g_dbconnection = ConnectDB();});
+#6    return g_dbconnection;
+#7 }
+```
+
+c++能够确保即使有多个线程同时调用GetDbConnection(), #5最终只被调用一次 <br>
 
 
 ### 1.4) std::variable\_condition, std::variable\_condition\_any
